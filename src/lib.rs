@@ -1,15 +1,20 @@
 #![cfg(windows)]
 
-extern crate kernel32;
 extern crate winapi;
 
-use kernel32::*;
-use winapi::*;
 use std::borrow::Cow;
-use std::io::{self, Read, Write};
-use std::os::windows::prelude::*;
-use std::path::Path;
 use std::ffi::OsString;
+use std::io::{self, Read, Write};
+use std::path::Path;
+
+use std::os::windows::prelude::*;
+
+use winapi::shared::minwindef::*;
+use winapi::um::fileapi::*;
+use winapi::um::handleapi::*;
+use winapi::um::namedpipeapi::*;
+use winapi::um::winbase::*;
+use winapi::um::winnt::*;
 
 #[derive(Debug)]
 pub struct PipeStream {
@@ -25,13 +30,15 @@ impl PipeStream {
 
         let _ = unsafe { WaitNamedPipeW(u16_slice.as_ptr(), 0) };
         let handle = unsafe {
-            CreateFileW(u16_slice.as_ptr(),
-                        GENERIC_READ | GENERIC_WRITE,
-                        0,
-                        std::ptr::null_mut(),
-                        OPEN_EXISTING,
-                        FILE_ATTRIBUTE_NORMAL,
-                        std::ptr::null_mut())
+            CreateFileW(
+                u16_slice.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                0,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                std::ptr::null_mut(),
+            )
         };
 
         if handle != INVALID_HANDLE_VALUE {
@@ -64,11 +71,13 @@ impl Read for PipeStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut bytes_read = 0;
         let ok = unsafe {
-            ReadFile(self.handle.inner,
-                     buf.as_mut_ptr() as LPVOID,
-                     buf.len() as DWORD,
-                     &mut bytes_read,
-                     std::ptr::null_mut())
+            ReadFile(
+                self.handle.inner,
+                buf.as_mut_ptr() as LPVOID,
+                buf.len() as DWORD,
+                &mut bytes_read,
+                std::ptr::null_mut(),
+            )
         };
 
         if ok != 0 {
@@ -87,11 +96,13 @@ impl Write for PipeStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut bytes_written = 0;
         let ok = unsafe {
-            WriteFile(self.handle.inner,
-                      buf.as_ptr() as LPCVOID,
-                      buf.len() as DWORD,
-                      &mut bytes_written,
-                      std::ptr::null_mut())
+            WriteFile(
+                self.handle.inner,
+                buf.as_ptr() as LPCVOID,
+                buf.len() as DWORD,
+                &mut bytes_written,
+                std::ptr::null_mut(),
+            )
         };
 
         if ok != 0 {
@@ -150,14 +161,16 @@ impl<'a> PipeListener<'a> {
             access_flags |= FILE_FLAG_FIRST_PIPE_INSTANCE;
         }
         let handle = unsafe {
-            CreateNamedPipeW(u16_slice.as_ptr(),
-                             access_flags,
-                             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                             PIPE_UNLIMITED_INSTANCES,
-                             65536,
-                             65536,
-                             50,
-                             std::ptr::null_mut())
+            CreateNamedPipeW(
+                u16_slice.as_ptr(),
+                access_flags,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                PIPE_UNLIMITED_INSTANCES,
+                65536,
+                65536,
+                50,
+                std::ptr::null_mut(),
+            )
         };
 
         if handle != INVALID_HANDLE_VALUE {
@@ -191,8 +204,10 @@ impl<'a> PipeListener<'a> {
     }
 
     pub fn accept(&mut self) -> io::Result<PipeStream> {
-        let handle = std::mem::replace(&mut self.next_pipe,
-                                       PipeListener::create_pipe(&self.path, false)?);
+        let handle = std::mem::replace(
+            &mut self.next_pipe,
+            PipeListener::create_pipe(&self.path, false)?,
+        );
 
         PipeListener::connect_pipe(&handle)?;
 
@@ -208,7 +223,8 @@ impl<'a> PipeListener<'a> {
 }
 
 pub struct Incoming<'a, 'b>
-    where 'b: 'a
+where
+    'b: 'a,
 {
     listener: &'a mut PipeListener<'b>,
 }
@@ -232,8 +248,8 @@ impl<'a, 'b> Iterator for Incoming<'a, 'b> {
 
 #[cfg(test)]
 mod test {
-    use std::thread;
     use super::*;
+    use std::thread;
 
     macro_rules! or_panic {
         ($e:expr) => {
@@ -241,9 +257,9 @@ mod test {
                 Ok(e) => e,
                 Err(e) => {
                     panic!("{}", e);
-                },
+                }
             }
-        }
+        };
     }
 
     #[test]
@@ -278,10 +294,12 @@ mod test {
         let socket_path = Path::new("//./pipe/itersock");
 
         let mut listener = or_panic!(PipeListener::bind(socket_path));
-        let thread = thread::spawn(move || for stream in listener.incoming().take(2) {
-            let mut stream = or_panic!(stream);
-            let mut buf = [0];
-            or_panic!(stream.read(&mut buf));
+        let thread = thread::spawn(move || {
+            for stream in listener.incoming().take(2) {
+                let mut stream = or_panic!(stream);
+                let mut buf = [0];
+                or_panic!(stream.read(&mut buf));
+            }
         });
 
         for _ in 0..2 {
@@ -295,7 +313,7 @@ mod test {
 
 #[derive(Debug)]
 struct Handle {
-    inner: HANDLE,
+    inner: std::os::windows::raw::HANDLE,
 }
 
 impl Drop for Handle {
